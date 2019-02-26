@@ -4,13 +4,12 @@ import numpy as np
 
     
 
-class RunManager():
+class ChunkManager():
     
     
-    def __init__(self, datafile, calibration_inputs):
+    def __init__(self, data, calibration_inputs):
         
-        
-        self._load_data(datafile)
+        self._load_data(data)
         self._load_cal_coeff(calibration_inputs)
 
         
@@ -63,14 +62,13 @@ class RunManager():
         self.E = self.E.values[events_num, trigger_ch]
     
     
-    
-    
-    def _load_data(self, fname):    
-        with pd.HDFStore(fname) as s:
-            self.E = s['E']
-            self.XF = s['XF']
-            self.XN = s['XN']
-            self.Aux = s['AuxData']
+    def _load_data(self, data):
+        self.E = data['E']
+        self.XF = data['XF']
+        self.XN = data['XN']
+        self.Aux = data['AuxData']    
+
+
     
     def _load_cal_coeff(self, calibration_inputs):
         
@@ -151,22 +149,47 @@ class RunManager():
 
         return pd.Series(data=(TDC - tmp).values,name='TDC')
 
-    def _calibrateRF(self, TDC, RF_shift):    
-        return TDC+1500, TDC+1500+RF_shift['RF_shift'] 
+    def _calibrateRF(self, TDC, RF_shift): 
+        return TDC + 1500, TDC + 1500 + RF_shift['RF_shift']
+        #return (TDC+10* RF_shift['RF_shift'] + 1500)%RF_shift['RF_shift'] 
 
 
     def _fineCalibrationE(self, E, Z, trigger_ch, FinerE_cal):
          raise(NotImplementedError) 
 
+            
+class RunManager():
+    
+    def __init__(self, fname, calibration_inputs, ChunkManagerClass, chunksize = 50000):
+        
+        with pd.HDFStore(fname) as s:
+            
+            N = s.get_storer('E').shape[0]
+            
+            dfs = []
+            for i in range(0, N, chunksize):
+                
+                data = {}
+                for attr in ['E', 'XF', 'XN', 'AuxData']:
+                    d = s.select(attr, start=i, stop=min(N, i+chunksize))
+                    data[attr] = d.reset_index(drop=True)
+                
+                cm = ChunkManagerClass(data, calibration_inputs)
+                dfs.append(cm.data)
+                del cm
+                
+            self.data = pd.concat(dfs).reset_index(drop=True)
+            
+            
     
 class DataManager():
     
-    def __init__(self, run_list, calibration_inputs, RunManagerClass):
+    def __init__(self, run_list, calibration_inputs, ChunkManagerClass, **kwargs):
         
         dfs = []
         
         for fname in run_list:
-            rm = RunManagerClass(fname, calibration_inputs)
+            rm = RunManager(fname, calibration_inputs, ChunkManagerClass, **kwargs)
             dfs.append(rm.data)
             del rm
             
